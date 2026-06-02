@@ -40,9 +40,12 @@ Pre lokálny vývoj prípadne: `python3 -m http.server` a otvor `localhost:8000`
 - **Animácia vrstvy**: pomocný `THREE.Group` pivot → `pivot.attach()` 9
   cubies → plynulé otočenie (rAF + easing) → `scene.attach()` späť →
   zaokrúhlenie pozícií.
-- **Solver** rieši **spätným prehraním** uloženého zamiešania (obrátené
-  poradie + invertované ťahy). Drž ho ako samostatný modul, aby sa dal
-  neskôr nahradiť algoritmickým solverom (Kociemba).
+- **Solver** číta skutočný stav kocky (`readState()` → 54-prvkové facelet
+  pole) a rieši z ľubovoľnej pozície metódou **vrstva po vrstve** (beginner,
+  dvojfázová posledná vrstva). Funguje aj po ručnom rozložení klikaním. Sloty
+  aj ťahy modelu sú generované z geometrie (zhodné s 3D), takže výstup ide
+  priamo do animácie. Solver je čistá logika (bez three.js), dá sa neskôr
+  nahradiť algoritmickým solverom (Kociemba).
 
 ## Konvencie
 

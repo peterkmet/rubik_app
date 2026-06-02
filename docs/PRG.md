@@ -94,18 +94,27 @@ miešanie bolo zmysluplné. Zoznam použitých ťahov sa **uloží**.
 
 ### 4.2 Riešenie (solver)
 
-V aktuálnej verzii solver pracuje **spätným prehraním** uloženej
-postupnosti miešania:
+Solver číta **skutočný aktuálny stav** kocky a zloží ju z ľubovoľnej
+legálnej pozície – nezáleží, či bola rozložená tlačidlom „Zamiešať" alebo
+ručne klikaním. Funguje takto:
 
-```
-riešenie = obrátené poradie(zamiešanie), každý ťah invertovaný
-napr. (U  R' F2)  ->  (F2  R  U')
-```
+1. `readState()` zostaví z 3D scény **54-prvkové facelet pole** (poloha a
+   svetová orientácia nálepiek). Sloty (poloha + normála) sú zhodné s
+   logickým modelom, takže mapovanie je automaticky zarovnané.
+2. `solve(state)` zloží kocku metódou **vrstva po vrstve** (beginner,
+   dvojfázová posledná vrstva): biely/spodný kríž → spodné rohy → stredná
+   vrstva → horný kríž → orientácia horných rohov → permutácia poslednej
+   vrstvy. Výstup je postupnosť ťahov v štandardnej notácii.
+3. Sloty aj permutácie ťahov modelu sú **generované z geometrie** rovnako
+   ako 3D kocka, takže ťah modelu zodpovedá tomu istému ťahu v animácii.
+4. Výsledná postupnosť sa **zjednoduší** (zlúčenie/zrušenie po sebe idúcich
+   ťahov tej istej steny) a interná kontrola overí, že rieši zadaný stav.
 
-Tento prístup je 100 % spoľahlivý a vždy vráti kocku do vyriešeného
-stavu. Je oddelený do samostatného modulu, takže ho je možné v budúcnosti
-nahradiť plnohodnotným algoritmickým solverom (napr. Kociembov
-dvojfázový algoritmus) bez zásahu do zvyšku aplikácie.
+Tlačidlo „Vyriešiť" je aktívne vždy, keď kocka **nie je** zložená. Riešenie
+je dlhšie ako optimálne (beginner metóda, rádovo ~100–150 ťahov), no z
+ľubovoľného stavu vždy korektné. Solver je čistá logika bez väzby na
+three.js, takže ho je možné neskôr nahradiť algoritmickým solverom
+(napr. Kociembov dvojfázový algoritmus) bez zásahu do zvyšku aplikácie.
 
 ## 5. Používateľské rozhranie
 
