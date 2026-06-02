@@ -115,8 +115,8 @@ dvojfázový algoritmus) bez zásahu do zvyšku aplikácie.
 | Tlačidlo „Zamiešať“  | Zamieša kocku `X` náhodnými ťahmi (animovane).            |
 | Tlačidlo „Vyriešiť“  | Spustí solver, ktorý kocku zloží (animovane).             |
 | Tlačidlo „Reset“     | Okamžite vráti kocku do vyriešeného stavu.                |
-| Ťah myšou na kocke   | Pootočí príslušnú vrstvu v smere ťahu (raycasting).       |
-| Ťah myšou mimo kocky | Otáčanie pohľadu kamery okolo kocky (OrbitControls).      |
+| Klik na stenu kocky  | Pootočí danú vrstvu „smerom od kurzora“ (stačí kliknúť).  |
+| Ťah myšou            | Otáčanie pohľadu kamery okolo kocky (OrbitControls).      |
 | Koliesko myši        | Priblíženie / oddialenie.                                 |
 
 Počas prebiehajúcej animácie sú tlačidlá zablokované, aby nedošlo k
@@ -133,18 +133,20 @@ rubik_app/
 
 ## 7. Ovládanie kocky myšou (implementované)
 
-Ťahom (drag) na ktorúkoľvek stenu kocky sa príslušná vrstva pootočí o 90°
-v smere ťahu. Funguje takto:
+**Kliknutím** na ktorúkoľvek stenu kocky sa príslušná vrstva pootočí o 90°
+„smerom od kurzora“ – stačí kliknúť, netreba ťahať. Funguje takto:
 
-1. Pri stlačení sa cez `THREE.Raycaster` zistí, na ktorú malú kocku a stenu
-   používateľ klikol (vrátane svetovej normály steny).
-2. Z vektora ťahu myši na obrazovke sa určí, ktorej osi roviny steny ťah
-   najviac zodpovedá → z toho sa odvodí **os a smer otáčania** vrstvy.
+1. Pri kliknutí sa cez `THREE.Raycaster` zistí, na ktorú malú kocku a stenu
+   používateľ klikol; svetová normála steny sa prichytí na dominantnú os
+   (kvôli zaobleným hranám).
+2. Ako smer „ťahu“ sa použije vektor z miesta kliknutia smerom do stredu
+   kocky (na obrazovke). Z neho sa určí os roviny steny → a z toho **os a
+   smer otáčania** vrstvy tak, aby sa klinutý bod pohol od kurzora.
 3. Použije sa **existujúci animačný mechanizmus** otáčania vrstiev (rovnaký
    ako pri miešaní/riešení).
 
-Počas ťahu na kocku je dočasne vypnuté otáčanie kamery (OrbitControls), aby
-sa pohyby neprekrývali. Ťah mimo kocky naďalej otáča pohľad.
+Rozlišuje sa klik vs. ťah podľa prejdenej vzdialenosti: krátky klik otočí
+vrstvu, ťah (pohyb myši) necháva otáčať pohľad kamery (OrbitControls).
 
 ## 8. Plánované rozšírenia (ďalšia verzia)
 
