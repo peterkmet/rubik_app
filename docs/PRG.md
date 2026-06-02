@@ -96,25 +96,25 @@ miešanie bolo zmysluplné. Zoznam použitých ťahov sa **uloží**.
 
 Solver číta **skutočný aktuálny stav** kocky a zloží ju z ľubovoľnej
 legálnej pozície – nezáleží, či bola rozložená tlačidlom „Zamiešať" alebo
-ručne klikaním. Funguje takto:
+ručne klikaním. Používa **Kociembov dvojfázový algoritmus** cez vendorovanú
+knižnicu [`cubejs`](https://github.com/ldez/cubejs) (MIT) v `vendor/`.
+Funguje takto:
 
-1. `readState()` zostaví z 3D scény **54-prvkové facelet pole** (poloha a
-   svetová orientácia nálepiek). Sloty (poloha + normála) sú zhodné s
-   logickým modelom, takže mapovanie je automaticky zarovnané.
-2. `solve(state)` zloží kocku metódou **vrstva po vrstve** (beginner,
-   dvojfázová posledná vrstva): biely/spodný kríž → spodné rohy → stredná
-   vrstva → horný kríž → orientácia horných rohov → permutácia poslednej
-   vrstvy. Výstup je postupnosť ťahov v štandardnej notácii.
-3. Sloty aj permutácie ťahov modelu sú **generované z geometrie** rovnako
-   ako 3D kocka, takže ťah modelu zodpovedá tomu istému ťahu v animácii.
-4. Výsledná postupnosť sa **zjednoduší** (zlúčenie/zrušenie po sebe idúcich
-   ťahov tej istej steny) a interná kontrola overí, že rieši zadaný stav.
+1. `readState()` zostaví z 3D scény **54-prvkové facelet pole** (svetová
+   orientácia nálepiek). Sloty (poloha + normála) sú generované z geometrie
+   rovnako ako 3D kocka, takže mapovanie je automaticky zarovnané.
+2. Pole sa **preindexuje** (`KOCIEMBA_SRC`) do facelet-stringu v poradí,
+   ktoré očakáva `cubejs` (URFDLB). Toto mapovanie bolo odvodené a overené
+   offline voči `cubejs`.
+3. `Cube.fromString(...).solve()` vráti riešenie (**~20–22 ťahov**) v
+   štandardnej notácii, ktorá sa zhoduje s notáciou animácie – ťahy idú
+   priamo do fronty.
 
-Tlačidlo „Vyriešiť" je aktívne vždy, keď kocka **nie je** zložená. Riešenie
-je dlhšie ako optimálne (beginner metóda, rádovo ~100–150 ťahov), no z
-ľubovoľného stavu vždy korektné. Solver je čistá logika bez väzby na
-three.js, takže ho je možné neskôr nahradiť algoritmickým solverom
-(napr. Kociembov dvojfázový algoritmus) bez zásahu do zvyšku aplikácie.
+Pruning tabuľky Kociembu sa stavajú **lazy** pri prvom stlačení „Vyriešiť"
+(~1 s, status „Pripravujem solver…"). Tlačidlo „Vyriešiť" je aktívne vždy,
+keď kocka **nie je** zložená. `vendor/cube.js` a `vendor/solve.js` sa
+načítavajú ako globálne skripty (`<script src>`) pred ES modulom – žiadne
+CDN za behu pre solver.
 
 ## 5. Používateľské rozhranie
 
@@ -135,7 +135,10 @@ prekrývaniu ťahov.
 
 ```
 rubik_app/
-├── index.html        # celá aplikácia (HTML + CSS + JS)
+├── index.html        # aplikácia (HTML + CSS + JS, 3D + UI)
+├── vendor/
+│   ├── cube.js       # cubejs – reprezentácia kocky (MIT)
+│   └── solve.js      # cubejs – Kociembov dvojfázový solver (MIT)
 └── docs/
     └── PRG.md         # tento dokument
 ```

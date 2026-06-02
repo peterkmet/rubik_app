@@ -41,16 +41,17 @@ Pre lokálny vývoj prípadne: `python3 -m http.server` a otvor `localhost:8000`
   cubies → plynulé otočenie (rAF + easing) → `scene.attach()` späť →
   zaokrúhlenie pozícií.
 - **Solver** číta skutočný stav kocky (`readState()` → 54-prvkové facelet
-  pole) a rieši z ľubovoľnej pozície metódou **vrstva po vrstve** (beginner,
-  dvojfázová posledná vrstva). Funguje aj po ručnom rozložení klikaním. Sloty
-  aj ťahy modelu sú generované z geometrie (zhodné s 3D), takže výstup ide
-  priamo do animácie. Solver je čistá logika (bez three.js), dá sa neskôr
-  nahradiť algoritmickým solverom (Kociemba).
+  pole) a rieši z ľubovoľnej pozície (aj po ručnom rozložení klikaním)
+  **Kociembovým dvojfázovým algoritmom** cez vendorovanú knižnicu `cubejs`
+  (`vendor/cube.js`, `vendor/solve.js`, MIT). Facelet pole sa preindexuje
+  (`KOCIEMBA_SRC`) do URFDLB stringu pre cubejs; riešenie ~20–22 ťahov ide
+  priamo do animácie. Pruning tabuľky sa stavajú lazy pri prvom „Vyriešiť".
 
 ## Konvencie
 
 - Kód aj UI texty a komentáre sú v **slovenčine** (zachovaj tento štýl).
-- Drž všetko v `index.html`, pokiaľ nie je dôvod štiepiť na súbory.
+- Drž všetko v `index.html`, pokiaľ nie je dôvod štiepiť na súbory
+  (výnimka: vendorovaný solver `cubejs` v `vendor/`).
 - Po každom otáčaní vrstvy **zaokrúhľuj pozície** cubies.
 - Počas prebiehajúcej animácie **blokuj tlačidlá**, aby sa ťahy neprekrývali.
 - Animácie rob cez `requestAnimationFrame` s easing, nie skokovo.
@@ -59,7 +60,8 @@ Pre lokálny vývoj prípadne: `python3 -m http.server` a otvor `localhost:8000`
 
 ```
 rubik_app/
-├── index.html      # celá aplikácia (HTML + CSS + JS)
+├── index.html      # aplikácia (HTML + CSS + JS, 3D + UI)
+├── vendor/         # cubejs (Kociemba solver, MIT) – cube.js + solve.js
 ├── CLAUDE.md       # tento súbor
 └── docs/
     └── PRG.md      # programová dokumentácia / špecifikácia

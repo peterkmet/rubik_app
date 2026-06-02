@@ -130,6 +130,9 @@
 
   <div id="hint">Klikni bližšie k hrane kocky = pootoč daný slice · ťahaj myšou = otoč pohľad · koliesko = zoom</div>
 
+  <!-- Kociemba two-phase solver (cubejs, MIT) – vendored, no CDN at runtime -->
+  <script src="vendor/cube.js"></script>
+  <script src="vendor/solve.js"></script>
   <script type="module">
     import * as THREE from 'three';
     import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
@@ -174,35 +177,21 @@
     const SUFFIXES = ['', "'", '2'];
 
     // ====================================================================
-    // Solver (layer-by-layer, beginner method, 2-look last layer).
-    // Pure logic over a 54-facelet model whose slots and move permutations
-    // are generated from geometry, matching the 3D rotation semantics above.
-    // Reuses MOVES. The model's "solved" check is named `modelSolved` to
-    // avoid clashing with the scene's `isSolved`.
+    // Solver: Kociemba two-phase via vendored cubejs (vendor/cube.js,
+    // vendor/solve.js, loaded as globals before this module). ~20 moves.
+    // The cube state is read from the 3D scene into a 54-facelet array
+    // (FACELETS order) and reindexed into cubejs URFDLB facelet-string order.
     // ====================================================================
-    const M_AXES = ['x', 'y', 'z'];
+    const M_AXES = ["x", "y", "z"];
     const mv = (x, y, z) => ({ x, y, z });
-    const keyOf = (p, n) => `${p.x},${p.y},${p.z}|${n.x},${n.y},${n.z}`;
-
-    function rotate(p, axis, k) {
-      let { x, y, z } = p;
-      for (let i = 0; i < ((k % 4) + 4) % 4; i++) {
-        if (axis === 'x') { const ny = -z, nz = y; y = ny; z = nz; }
-        else if (axis === 'y') { const nx = z, nz = -x; x = nx; z = nz; }
-        else { const nx = -y, ny = x; x = nx; y = ny; }
-      }
-      return mv(x, y, z);
-    }
-
     const MODEL_FACES = [
-      { face: 'U', nrm: mv(0, 1, 0) },
-      { face: 'R', nrm: mv(1, 0, 0) },
-      { face: 'F', nrm: mv(0, 0, 1) },
-      { face: 'D', nrm: mv(0,-1, 0) },
-      { face: 'L', nrm: mv(-1,0, 0) },
-      { face: 'B', nrm: mv(0, 0,-1) },
+      { face: "U", nrm: mv(0, 1, 0) },
+      { face: "R", nrm: mv(1, 0, 0) },
+      { face: "F", nrm: mv(0, 0, 1) },
+      { face: "D", nrm: mv(0,-1, 0) },
+      { face: "L", nrm: mv(-1,0, 0) },
+      { face: "B", nrm: mv(0, 0,-1) },
     ];
-
     const FACELETS = [];
     for (const { face, nrm } of MODEL_FACES) {
       const fixedAxis = M_AXES.find((a) => Math.abs(nrm[a]) === 1);
@@ -217,350 +206,17 @@
         }
     }
 
-    const SLOT_INDEX = new Map();
-    FACELETS.forEach((s, i) => SLOT_INDEX.set(keyOf(s.pos, s.nrm), i));
+    // Reindex from our FACELETS order into cubejs facelet-string order
+    // (derived and verified offline against cubejs).
+    const KOCIEMBA_SRC = [0,3,6,1,4,7,2,5,8,17,16,15,14,13,12,11,10,9,20,23,26,19,22,25,18,21,24,29,32,35,28,31,34,27,30,33,42,43,44,39,40,41,36,37,38,53,50,47,52,49,46,51,48,45];
 
-    function buildPerm(face) {
-      const { axis, layer, dir } = MOVES[face];
-      const perm = FACELETS.map((_, i) => i);
-      FACELETS.forEach((s, i) => {
-        if (s.pos[axis] !== layer) return;
-        const np = rotate(s.pos, axis, dir);
-        const nn = rotate(s.nrm, axis, dir);
-        perm[SLOT_INDEX.get(keyOf(np, nn))] = i;
-      });
-      return perm;
-    }
-    const PERM = {};
-    for (const f of Object.keys(MOVES)) PERM[f] = buildPerm(f);
+    let solverReady = false;
 
-    const SOLVED = FACELETS.map((s) => s.face);
-
-    function turn(state, face) {
-      const perm = PERM[face];
-      return perm.map((i) => state[i]);
-    }
-    function applyToken(state, token) {
-      const suffix = token.slice(1);
-      let s = state;
-      const reps = suffix === "'" ? 3 : suffix === '2' ? 2 : 1;
-      for (let i = 0; i < reps; i++) s = turn(s, token[0]);
-      return s;
-    }
-    function applyTokens(state, tokens) { return tokens.reduce(applyToken, state); }
-    function modelSolved(state) { return state.every((c, i) => c === SOLVED[i]); }
-
-    const V = {
-      U: mv(0, 1, 0), D: mv(0, -1, 0),
-      F: mv(0, 0, 1), B: mv(0, 0, -1),
-      R: mv(1, 0, 0), L: mv(-1, 0, 0),
-    };
-    const SIDES = ['F', 'R', 'B', 'L'];
-    const eqv = (a, b) => a.x === b.x && a.y === b.y && a.z === b.z;
-    const addv = (a, b) => mv(a.x + b.x, a.y + b.y, a.z + b.z);
-
-    function sideLetter(vec) {
-      for (const k of Object.keys(V)) if (eqv(V[k], vec)) return k;
-      return null;
-    }
-    const rightOf = (s) => sideLetter(rotate(V[s], 'y', 1));
-    const leftOf = (s) => sideLetter(rotate(V[s], 'y', 3));
-    const oppositeOf = (s) => sideLetter(rotate(V[s], 'y', 2));
-
-    const EDGE_POS = [], CORNER_POS = [];
-    for (const x of [-1, 0, 1]) for (const y of [-1, 0, 1]) for (const z of [-1, 0, 1]) {
-      const nz = [x, y, z].filter((c) => c !== 0).length;
-      if (nz === 2) EDGE_POS.push(mv(x, y, z));
-      if (nz === 3) CORNER_POS.push(mv(x, y, z));
-    }
-
-    function stickerNrms(pos) {
-      const out = [];
-      for (const a of M_AXES) if (pos[a] !== 0) { const n = mv(0, 0, 0); n[a] = pos[a]; out.push(n); }
-      return out;
-    }
-    function colorAt(state, pos, nrm) { return state[SLOT_INDEX.get(keyOf(pos, nrm))]; }
-
-    function findEdge(state, c1, c2) {
-      for (const pos of EDGE_POS) {
-        const cols = stickerNrms(pos).map((n) => colorAt(state, pos, n));
-        if (cols.includes(c1) && cols.includes(c2)) return pos;
-      }
-      return null;
-    }
-    function findCorner(state, c1, c2, c3) {
-      const want = [c1, c2, c3].sort().join('');
-      for (const pos of CORNER_POS) {
-        const cols = stickerNrms(pos).map((n) => colorAt(state, pos, n)).sort().join('');
-        if (cols === want) return pos;
-      }
-      return null;
-    }
-
-    function frame(front) {
-      return {
-        F: front, R: rightOf(front), B: oppositeOf(front), L: leftOf(front), U: 'U', D: 'D',
-      };
-    }
-    function mapAlg(front, alg) {
-      const fr = frame(front);
-      return alg.trim().split(/\s+/).filter(Boolean).map((t) => fr[t[0]] + t.slice(1));
-    }
-
-    function makeCtx(state) {
-      const ctx = { state: state.slice(), moves: [] };
-      ctx.do = (seq) => {
-        const tokens = Array.isArray(seq) ? seq : seq.trim().split(/\s+/).filter(Boolean);
-        for (const t of tokens) { ctx.state = applyToken(ctx.state, t); ctx.moves.push(t); }
-      };
-      return ctx;
-    }
-
-    // Phase 1: D cross.
-    function crossEdgeSolved(state, S) {
-      const pos = addv(V.D, V[S]);
-      return colorAt(state, pos, V.D) === 'D' && colorAt(state, pos, V[S]) === S;
-    }
-    function crossDone(state) { return SIDES.every((S) => crossEdgeSolved(state, S)); }
-
-    function insertCrossEdge(ctx, S) {
-      for (let k = 0; k < 4; k++) {
-        const pos = findEdge(ctx.state, 'D', S);
-        if (sideLetter(stickerNrms(pos).find((n) => n.y === 0)) === S) break;
-        ctx.do('U');
-      }
-      const pos = findEdge(ctx.state, 'D', S);
-      if (colorAt(ctx.state, pos, V.U) === 'D') ctx.do(S + '2');
-      else ctx.do(mapAlg(S, "F D R' D'"));
-    }
-
-    const ALL_TOKENS = [];
-    for (const f of Object.keys(MOVES)) for (const suf of ['', "'", '2']) ALL_TOKENS.push(f + suf);
-
-    function searchSeq(state, ok, maxDepth) {
-      let found = null;
-      const dfs = (st, seq, d) => {
-        if (found) return;
-        if (ok(st)) { found = seq.slice(); return; }
-        if (d === 0) return;
-        for (const t of ALL_TOKENS) {
-          if (seq.length && seq[seq.length - 1][0] === t[0]) continue;
-          dfs(applyToken(st, t), [...seq, t], d - 1);
-          if (found) return;
-        }
-      };
-      for (let depth = 1; depth <= maxDepth && !found; depth++) dfs(state, [], depth);
-      return found;
-    }
-
-    function liftEdgeToTop(ctx, S) {
-      const placed = SIDES.filter((s) => s !== S && crossEdgeSolved(ctx.state, s));
-      const ok = (st) => findEdge(st, 'D', S).y === 1 && placed.every((s) => crossEdgeSolved(st, s));
-      const seq = searchSeq(ctx.state, ok, 3);
-      if (seq) ctx.do(seq);
-    }
-
-    function phaseDCross(ctx) {
-      for (let g = 0; g < 50 && !crossDone(ctx.state); g++) {
-        const S = SIDES.find((s) => !crossEdgeSolved(ctx.state, s));
-        if (findEdge(ctx.state, 'D', S).y === 1) insertCrossEdge(ctx, S);
-        else liftEdgeToTop(ctx, S);
-      }
-    }
-
-    // Phase 2: D corners.
-    const D_CORNERS = [['F', 'R'], ['R', 'B'], ['B', 'L'], ['L', 'F']];
-    function cornerColPos(y, a, b) { return mv(V[a].x + V[b].x, y, V[a].z + V[b].z); }
-    function dCornerSolved(state, a, b) {
-      const p = cornerColPos(-1, a, b);
-      return colorAt(state, p, V.D) === 'D' && colorAt(state, p, V[a]) === a && colorAt(state, p, V[b]) === b;
-    }
-    function cornerColumnFront(pos) {
-      for (const a of SIDES) {
-        const b = rightOf(a);
-        if (V[a].x + V[b].x === pos.x && V[a].z + V[b].z === pos.z) return a;
-      }
-      return null;
-    }
-    function placeDCorner(ctx, a, b) {
-      for (let g = 0; g < 12; g++) {
-        if (dCornerSolved(ctx.state, a, b)) return;
-        const c = findCorner(ctx.state, 'D', a, b);
-        if (c.y === -1) { ctx.do(mapAlg(cornerColumnFront(c), "R U R'")); continue; }
-        let cur = findCorner(ctx.state, 'D', a, b);
-        for (let k = 0; k < 4 && !(cur.x === V[a].x + V[b].x && cur.z === V[a].z + V[b].z); k++) {
-          ctx.do('U');
-          cur = findCorner(ctx.state, 'D', a, b);
-        }
-        const top = cornerColPos(1, a, b);
-        if (colorAt(ctx.state, top, V.U) === 'D') ctx.do(mapAlg(a, "R F R2 F' R'"));
-        else if (colorAt(ctx.state, top, V[a]) === 'D') ctx.do(mapAlg(a, "F' U' F"));
-        else ctx.do(mapAlg(a, "R U R'"));
-      }
-    }
-    function phaseDCorners(ctx) {
-      for (let g = 0; g < 50 && !D_CORNERS.every(([a, b]) => dCornerSolved(ctx.state, a, b)); g++)
-        for (const [a, b] of D_CORNERS) if (!dCornerSolved(ctx.state, a, b)) placeDCorner(ctx, a, b);
-    }
-
-    // Phase 3: middle layer.
-    const E_EDGES = [['F', 'R'], ['R', 'B'], ['B', 'L'], ['L', 'F']];
-    function middleEdgeSolved(state, a, b) {
-      const p = mv(V[a].x + V[b].x, 0, V[a].z + V[b].z);
-      return colorAt(state, p, V[a]) === a && colorAt(state, p, V[b]) === b;
-    }
-    function placeMiddleEdge(ctx, a, b) {
-      for (let g = 0; g < 12; g++) {
-        if (middleEdgeSolved(ctx.state, a, b)) return;
-        let pos = findEdge(ctx.state, a, b);
-        if (pos.y === 0) { ctx.do(mapAlg(cornerColumnFront(pos), "R' U2 B' R B U2 R")); continue; }
-        for (let k = 0; k < 4; k++) {
-          pos = findEdge(ctx.state, a, b);
-          const horiz = stickerNrms(pos).find((n) => n.y === 0);
-          if (colorAt(ctx.state, pos, horiz) === sideLetter(horiz)) break;
-          ctx.do('U');
-        }
-        pos = findEdge(ctx.state, a, b);
-        const front = sideLetter(stickerNrms(pos).find((n) => n.y === 0));
-        const topColor = colorAt(ctx.state, pos, V.U);
-        if (topColor === rightOf(front)) ctx.do(mapAlg(front, "R' U2 B' R B U2 R"));
-        else ctx.do(mapAlg(front, "R' F2 U' F' U F2 R"));
-      }
-    }
-    function phaseMiddle(ctx) {
-      for (let g = 0; g < 30 && !E_EDGES.every(([a, b]) => middleEdgeSolved(ctx.state, a, b)); g++)
-        for (const [a, b] of E_EDGES) if (!middleEdgeSolved(ctx.state, a, b)) placeMiddleEdge(ctx, a, b);
-    }
-
-    // Phase 4: U cross (orient last-layer edges).
-    function uCrossDone(state) { return SIDES.every((S) => colorAt(state, addv(V.U, V[S]), V.U) === 'U'); }
-    function phaseUCross(ctx) {
-      for (let g = 0; g < 8 && !uCrossDone(ctx.state); g++) {
-        const oriented = SIDES.filter((S) => colorAt(ctx.state, addv(V.U, V[S]), V.U) === 'U');
-        if (oriented.length === 2) {
-          const [o1, o2] = oriented;
-          if (eqv(addv(V[o1], V[o2]), mv(0, 0, 0))) {
-            const front = (oriented.includes('R') && oriented.includes('L')) ? 'F' : 'R';
-            ctx.do(mapAlg(front, "F R U R' U' F'"));
-          } else {
-            const front = SIDES.find((f) => {
-              const set = new Set([leftOf(f), oppositeOf(f)]);
-              return set.has(o1) && set.has(o2);
-            });
-            ctx.do(mapAlg(front, "F R U R' U' F'"));
-          }
-        } else {
-          ctx.do(mapAlg('F', "F R U R' U' F'"));
-        }
-      }
-    }
-
-    // Phase 5: orient U corners (repeated trigger from a fixed spot).
-    function phaseUCorners(ctx) {
-      const frt = mv(1, 1, 1);
-      for (let i = 0; i < 4; i++) {
-        for (let r = 0; r < 6 && colorAt(ctx.state, frt, V.U) !== 'U'; r++) ctx.do("R' D' R D");
-        ctx.do('U');
-      }
-    }
-
-    // Phase 6: permute last layer.
-    function cornerPlaced(state, pos) {
-      return stickerNrms(pos).filter((n) => n.y === 0).every((n) => colorAt(state, pos, n) === sideLetter(n));
-    }
-    function edgePlaced(state, S) { return colorAt(state, addv(V.U, V[S]), V[S]) === S; }
-    function uEdgesPermuted(state) { return SIDES.every((S) => edgePlaced(state, S)); }
-
-    function homeCornersAfterAUF(state, k) {
-      let s = state;
-      for (let j = 0; j < k; j++) s = applyToken(s, 'U');
-      return CORNER_POS.filter((p) => p.y === 1 && cornerPlaced(s, p)).length;
-    }
-    function bestAUFHome(state) {
-      let best = 0;
-      for (let k = 0; k < 4; k++) best = Math.max(best, homeCornersAfterAUF(state, k));
-      return best;
-    }
-    const TOP_CORNERS = CORNER_POS.filter((p) => p.y === 1);
-    function cornerHomeSlot(state, pos) {
-      const cols = stickerNrms(pos).filter((n) => n.y === 0).map((n) => colorAt(state, pos, n));
-      return TOP_CORNERS.findIndex((q) =>
-        stickerNrms(q).filter((n) => n.y === 0).every((n) => cols.includes(sideLetter(n))));
-    }
-    function cornerParity(state) {
-      const perm = TOP_CORNERS.map((p) => cornerHomeSlot(state, p));
-      let inv = 0;
-      for (let i = 0; i < perm.length; i++)
-        for (let j = i + 1; j < perm.length; j++) if (perm[i] > perm[j]) inv++;
-      return inv & 1;
-    }
-    const A_PERM = "R' F R' B2 R F' R' B2 R2";
-    function permuteUCorners(ctx) {
-      if (cornerParity(ctx.state)) ctx.do('U');
-      for (let g = 0; g < 30; g++) {
-        let k4 = -1;
-        for (let k = 0; k < 4; k++) if (homeCornersAfterAUF(ctx.state, k) === 4) { k4 = k; break; }
-        if (k4 >= 0) { for (let j = 0; j < k4; j++) ctx.do('U'); return; }
-        let best = 'F', bestScore = -1;
-        for (const front of SIDES) {
-          const score = bestAUFHome(applyTokens(ctx.state, mapAlg(front, A_PERM)));
-          if (score > bestScore) { bestScore = score; best = front; }
-        }
-        ctx.do(mapAlg(best, A_PERM));
-      }
-    }
-    function permuteUEdges(ctx) {
-      for (let g = 0; g < 8 && !uEdgesPermuted(ctx.state); g++) {
-        const homeS = SIDES.find((S) => edgePlaced(ctx.state, S));
-        const front = homeS ? oppositeOf(homeS) : 'F';
-        ctx.do(mapAlg(front, "R U' R U R U R U' R' U' R2"));
-      }
-    }
-    function phasePLL(ctx) {
-      permuteUCorners(ctx);
-      permuteUEdges(ctx);
-      for (let k = 0; k < 4 && !modelSolved(ctx.state); k++) ctx.do('U');
-    }
-
-    function turnCount(token) {
-      const s = token.slice(1);
-      return s === "'" ? 3 : s === '2' ? 2 : 1;
-    }
-    function tokenFromTurns(face, n) {
-      n = ((n % 4) + 4) % 4;
-      if (n === 0) return null;
-      return n === 1 ? face : n === 2 ? face + '2' : face + "'";
-    }
-    function simplify(tokens) {
-      let out = tokens.slice();
-      let changed = true;
-      while (changed) {
-        changed = false;
-        for (let i = 0; i + 1 < out.length; i++) {
-          if (out[i][0] === out[i + 1][0]) {
-            const merged = tokenFromTurns(out[i][0], turnCount(out[i]) + turnCount(out[i + 1]));
-            out.splice(i, 2, ...(merged ? [merged] : []));
-            changed = true;
-            break;
-          }
-        }
-      }
-      return out;
-    }
-
-    // From any legal facelet state, return a list of move tokens that solve it.
+    // Solve a facelet array (FACELETS order) -> array of move tokens.
     function solve(state) {
-      const ctx = makeCtx(state);
-      phaseDCross(ctx);
-      phaseDCorners(ctx);
-      phaseMiddle(ctx);
-      phaseUCross(ctx);
-      phaseUCorners(ctx);
-      phasePLL(ctx);
-      const moves = simplify(ctx.moves);
-      if (!modelSolved(applyTokens(state, moves)))
-        throw new Error('solver produced an invalid solution');
-      return moves;
+      const str = KOCIEMBA_SRC.map((j) => state[j]).join("");
+      const sol = Cube.fromString(str).solve();
+      return sol ? sol.split(/\s+/).filter(Boolean) : [];
     }
 
     // ---------- Scéna ----------
@@ -813,13 +469,24 @@
 
     btnSolve.addEventListener('click', () => {
       if (isBusy || isSolved()) return;
-      const solution = solve(readState());
-      if (solution.length === 0) { setStatus('Kocka je už <b>vyriešená</b> ✓'); return; }
-      setStatus(`Riešim… <b>${solution.length}</b> ťahov`);
-      enqueue(solution, 'solve', () => {
-        setStatus(isSolved() ? 'Kocka je <b>vyriešená</b> ✓' : 'Hotovo.');
-        updateButtons();
-      });
+      const run = () => {
+        const solution = solve(readState());
+        if (solution.length === 0) { setStatus('Kocka je už <b>vyriešená</b> ✓'); updateButtons(); return; }
+        setStatus(`Riešim… <b>${solution.length}</b> ťahov`);
+        enqueue(solution, 'solve', () => {
+          setStatus(isSolved() ? 'Kocka je <b>vyriešená</b> ✓' : 'Hotovo.');
+          updateButtons();
+        });
+      };
+      if (!solverReady) {
+        // Prvé spustenie: postav pruning tabuľky Kociembu (~1 s). Status sa
+        // najprv vykreslí, až potom blokujúci init.
+        setStatus('Pripravujem solver…');
+        btnSolve.disabled = true;
+        setTimeout(() => { Cube.initSolver(); solverReady = true; run(); }, 30);
+      } else {
+        run();
+      }
     });
 
     btnReset.addEventListener('click', () => {
