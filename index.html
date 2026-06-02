@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="sk">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Rubikova kocka – simulácia</title>
+  <style>
+    :root {
+      --panel-bg: rgba(20, 24, 34, 0.82);
+      --accent: #4f8cff;
+      --accent-2: #2fbf71;
+      --text: #eef2f8;
+      --muted: #9aa6b8;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      height: 100%;
+      overflow: hidden;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      color: var(--text);
+      background: radial-gradient(circle at 50% 30%, #2a3450 0%, #0f1320 70%);
+    }
+    #scene { position: fixed; inset: 0; }
+    #scene canvas { display: block; }
+
+    #panel {
+      position: fixed;
+      top: 16px;
+      left: 16px;
+      z-index: 10;
+      background: var(--panel-bg);
+      backdrop-filter: blur(8px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 14px;
+      padding: 16px 18px;
+      width: 250px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+    }
+    #panel h1 {
+      font-size: 17px;
+      margin: 0 0 4px;
+      letter-spacing: 0.3px;
+    }
+    #panel .sub { font-size: 12px; color: var(--muted); margin-bottom: 14px; }
+
+    .row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+    .row label { font-size: 13px; color: var(--muted); }
+    #moves {
+      width: 64px;
+      padding: 6px 8px;
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      background: rgba(0, 0, 0, 0.3);
+      color: var(--text);
+      font-size: 14px;
+      text-align: center;
+    }
+
+    button {
+      width: 100%;
+      padding: 10px 12px;
+      margin-bottom: 8px;
+      border: none;
+      border-radius: 10px;
+      font-size: 14px;
+      font-weight: 600;
+      color: #fff;
+      cursor: pointer;
+      transition: transform 0.05s ease, filter 0.15s ease, opacity 0.15s ease;
+    }
+    button:active { transform: translateY(1px); }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+    #scramble { background: linear-gradient(180deg, #5a96ff, #3f74e0); }
+    #solve    { background: linear-gradient(180deg, #36cd80, #25a863); }
+    #reset    { background: linear-gradient(180deg, #5a657a, #424b5e); }
+    button:not(:disabled):hover { filter: brightness(1.08); }
+
+    #status {
+      margin-top: 6px;
+      font-size: 12.5px;
+      color: var(--muted);
+      min-height: 16px;
+      line-height: 1.4;
+    }
+    #status b { color: var(--text); }
+
+    #hint {
+      position: fixed;
+      bottom: 12px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 10;
+      font-size: 12px;
+      color: var(--muted);
+      background: rgba(0, 0, 0, 0.3);
+      padding: 6px 12px;
+      border-radius: 20px;
+    }
+  </style>
+
+  <!-- three.js a OrbitControls z CDN (žiadne lokálne závislosti) -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div id="scene"></div>
+
+  <div id="panel">
+    <h1>Rubikova kocka</h1>
+    <div class="sub">3D simulácia · zamiešaj a vyrieš</div>
+
+    <div class="row">
+      <label for="moves">Počet ťahov X</label>
+      <input id="moves" type="number" min="1" max="100" value="20" />
+    </div>
+
+    <button id="scramble">Zamiešať</button>
+    <button id="solve" disabled>Vyriešiť</button>
+    <button id="reset">Reset</button>
+
+    <div id="status">Kocka je <b>postavená</b>.</div>
+  </div>
+
+  <div id="hint">Ťahaj myšou pre otáčanie pohľadu · kolieskom zoom</div>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+    // ---------- Konštanty ----------
+    const COLORS = {
+      U: 0xffffff, // hore – biela
+      D: 0xffd500, // dole – žltá
+      F: 0x009b48, // vpredu – zelená
+      B: 0x0046ad, // vzadu – modrá
+      R: 0xb71234, // vpravo – červená
+      L: 0xff5800, // vľavo – oranžová
+    };
+    const BLACK = 0x14181f;          // vnútorné steny / pozadie škár
+    const SIZE = 0.94;               // veľkosť cubie (medzera medzi nimi)
+    const HALF_PI = Math.PI / 2;
+
+    // Poradie materiálov BoxGeometry: +X, -X, +Y, -Y, +Z, -Z
+    const LOCAL_NORMALS = [
+      new THREE.Vector3( 1, 0, 0),
+      new THREE.Vector3(-1, 0, 0),
+      new THREE.Vector3( 0, 1, 0),
+      new THREE.Vector3( 0,-1, 0),
+      new THREE.Vector3( 0, 0, 1),
+      new THREE.Vector3( 0, 0,-1),
+    ];
+
+    // Definícia základných ťahov: os, vrstva (±1) a smer otočenia.
+    const MOVES = {
+      U: { axis: 'y', layer:  1, dir: -1 },
+      D: { axis: 'y', layer: -1, dir:  1 },
+      R: { axis: 'x', layer:  1, dir: -1 },
+      L: { axis: 'x', layer: -1, dir:  1 },
+      F: { axis: 'z', layer:  1, dir: -1 },
+      B: { axis: 'z', layer: -1, dir:  1 },
+    };
+    const FACES = ['U', 'D', 'L', 'R', 'F', 'B'];
+    const SUFFIXES = ['', "'", '2'];
+
+    // ---------- Scéna ----------
+    const sceneEl = document.getElementById('scene');
+    const scene = new THREE.Scene();
+
+    const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
+    camera.position.set(4.5, 4.5, 6.5);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    sceneEl.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+    controls.minDistance = 4;
+    controls.maxDistance = 16;
+    controls.target.set(0, 0, 0);
+
+    scene.add(new THREE.AmbientLight(0xffffff, 0.9));
+    const dir = new THREE.DirectionalLight(0xffffff, 0.6);
+    dir.position.set(5, 8, 6);
+    scene.add(dir);
+
+    // ---------- Stavba kocky ----------
+    let cubies = [];
+
+    function makeCubie(x, y, z) {
+      const mats = LOCAL_NORMALS.map((n) => {
+        let color = BLACK;
+        if (n.x ===  1 && x ===  1) color = COLORS.R;
+        if (n.x === -1 && x === -1) color = COLORS.L;
+        if (n.y ===  1 && y ===  1) color = COLORS.U;
+        if (n.y === -1 && y === -1) color = COLORS.D;
+        if (n.z ===  1 && z ===  1) color = COLORS.F;
+        if (n.z === -1 && z === -1) color = COLORS.B;
+        return new THREE.MeshStandardMaterial({ color, roughness: 0.55, metalness: 0.0 });
+      });
+      const geo = new THREE.BoxGeometry(SIZE, SIZE, SIZE);
+      const mesh = new THREE.Mesh(geo, mats);
+      mesh.position.set(x, y, z);
+      return mesh;
+    }
+
+    function buildCube() {
+      // odstráň existujúce cubies
+      cubies.forEach((c) => {
+        scene.remove(c);
+        c.geometry.dispose();
+        c.material.forEach((m) => m.dispose());
+      });
+      cubies = [];
+      for (let x = -1; x <= 1; x++)
+        for (let y = -1; y <= 1; y++)
+          for (let z = -1; z <= 1; z++) {
+            const c = makeCubie(x, y, z);
+            scene.add(c);
+            cubies.push(c);
+          }
+    }
+
+    // ---------- Ťahy ----------
+    // token -> { axis, layer, angle, turns }
+    function parseToken(token) {
+      const face = token[0];
+      const suffix = token.slice(1);
+      const base = MOVES[face];
+      const turns = suffix === '2' ? 2 : 1;
+      const sign = suffix === "'" ? -1 : 1;
+      return {
+        axis: base.axis,
+        layer: base.layer,
+        angle: base.dir * sign * HALF_PI * turns,
+        turns,
+      };
+    }
+
+    function invertToken(token) {
+      const face = token[0];
+      const suffix = token.slice(1);
+      if (suffix === '2') return token;        // dvojitý ťah je sám sebe inverzný
+      if (suffix === "'") return face;          // U' -> U
+      return face + "'";                        // U  -> U'
+    }
+
+    // ---------- Animácia + fronta ----------
+    const queue = [];
+    let activeMove = null;
+    let isBusy = false;
+    let onDone = null;
+    const clock = new THREE.Clock();
+
+    function easeInOut(t) {
+      return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+    }
+
+    function startMove(token) {
+      const m = parseToken(token);
+      const pivot = new THREE.Group();
+      scene.add(pivot);
+      cubies.forEach((c) => {
+        if (Math.round(c.position[m.axis]) === m.layer) pivot.attach(c);
+      });
+      activeMove = {
+        pivot,
+        axis: m.axis,
+        target: m.angle,
+        elapsed: 0,
+        duration: m.turns === 2 ? 0.42 : 0.26,
+      };
+    }
+
+    function finishMove() {
+      const { pivot, axis, target } = activeMove;
+      pivot.rotation[axis] = target;
+      pivot.updateMatrixWorld(true);
+      [...pivot.children].forEach((c) => {
+        scene.attach(c);
+        // zaokrúhli pozíciu -> zabráni numerickému driftu
+        c.position.set(
+          Math.round(c.position.x),
+          Math.round(c.position.y),
+          Math.round(c.position.z)
+        );
+      });
+      scene.remove(pivot);
+      activeMove = null;
+    }
+
+    function enqueue(tokens, phase, doneCb) {
+      isBusy = true;
+      currentPhase = phase;
+      onDone = doneCb || null;
+      queue.push(...tokens);
+      updateButtons();
+    }
+
+    // ---------- Miešanie a solver ----------
+    let scrambleSeq = [];
+    let currentPhase = null;
+
+    function generateScramble(n) {
+      const seq = [];
+      let prev = null;
+      for (let i = 0; i < n; i++) {
+        let f;
+        do { f = FACES[Math.floor(Math.random() * FACES.length)]; } while (f === prev);
+        prev = f;
+        const suffix = SUFFIXES[Math.floor(Math.random() * SUFFIXES.length)];
+        seq.push(f + suffix);
+      }
+      return seq;
+    }
+
+    // Solver: spätné prehranie zamiešania (obrátené poradie + invertované ťahy).
+    function solveSequence(scramble) {
+      return [...scramble].reverse().map(invertToken);
+    }
+
+    // ---------- Kontrola vyriešenia ----------
+    function faceColorTowards(cubie, dir) {
+      for (let i = 0; i < 6; i++) {
+        const n = LOCAL_NORMALS[i].clone().applyQuaternion(cubie.quaternion);
+        if (n.dot(dir) > 0.9) return cubie.material[i].color.getHex();
+      }
+      return null;
+    }
+
+    function isSolved() {
+      const dirs = [
+        ['x',  1], ['x', -1], ['y', 1], ['y', -1], ['z', 1], ['z', -1],
+      ];
+      for (const [axis, sign] of dirs) {
+        const dir = new THREE.Vector3(
+          axis === 'x' ? sign : 0,
+          axis === 'y' ? sign : 0,
+          axis === 'z' ? sign : 0
+        );
+        const colors = [];
+        cubies.forEach((c) => {
+          if (Math.round(c.position[axis]) === sign) {
+            const col = faceColorTowards(c, dir);
+            if (col !== null && col !== BLACK) colors.push(col);
+          }
+        });
+        if (new Set(colors).size > 1) return false;
+      }
+      return true;
+    }
+
+    // ---------- UI ----------
+    const movesInput = document.getElementById('moves');
+    const btnScramble = document.getElementById('scramble');
+    const btnSolve = document.getElementById('solve');
+    const btnReset = document.getElementById('reset');
+    const statusEl = document.getElementById('status');
+
+    function setStatus(html) { statusEl.innerHTML = html; }
+
+    function updateButtons() {
+      btnScramble.disabled = isBusy;
+      btnReset.disabled = isBusy;
+      btnSolve.disabled = isBusy || scrambleSeq.length === 0;
+    }
+
+    btnScramble.addEventListener('click', () => {
+      if (isBusy) return;
+      let n = parseInt(movesInput.value, 10);
+      if (isNaN(n) || n < 1) n = 1;
+      if (n > 100) n = 100;
+      movesInput.value = n;
+      scrambleSeq = generateScramble(n);
+      setStatus(`Miešam… <b>${n}</b> ťahov`);
+      enqueue(scrambleSeq, 'scramble', () => {
+        setStatus(`Zamiešané <b>${scrambleSeq.length}</b> ťahmi.<br>Stlač <b>Vyriešiť</b>.`);
+      });
+    });
+
+    btnSolve.addEventListener('click', () => {
+      if (isBusy || scrambleSeq.length === 0) return;
+      const solution = solveSequence(scrambleSeq);
+      setStatus(`Riešim… <b>${solution.length}</b> ťahov`);
+      enqueue(solution, 'solve', () => {
+        scrambleSeq = [];
+        setStatus(isSolved() ? 'Kocka je <b>vyriešená</b> ✓' : 'Hotovo.');
+        updateButtons();
+      });
+    });
+
+    btnReset.addEventListener('click', () => {
+      if (isBusy) return;
+      queue.length = 0;
+      buildCube();
+      scrambleSeq = [];
+      setStatus('Kocka je <b>postavená</b>.');
+      updateButtons();
+    });
+
+    // ---------- Render loop ----------
+    function animate() {
+      requestAnimationFrame(animate);
+      const dt = clock.getDelta();
+
+      if (activeMove) {
+        activeMove.elapsed += dt;
+        const t = Math.min(1, activeMove.elapsed / activeMove.duration);
+        activeMove.pivot.rotation[activeMove.axis] = activeMove.target * easeInOut(t);
+        if (t >= 1) finishMove();
+      } else if (queue.length > 0) {
+        startMove(queue.shift());
+      } else if (isBusy) {
+        isBusy = false;
+        updateButtons();
+        const cb = onDone; onDone = null;
+        if (cb) cb();
+      }
+
+      controls.update();
+      renderer.render(scene, camera);
+    }
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    // Sprístupni pre ladenie z konzoly (kroky plánu 3 a 6).
+    window.rubik = {
+      applyMove: (t) => enqueue([t], 'manual'),
+      isSolved,
+      get cubies() { return cubies; },
+    };
+
+    // ---------- Štart ----------
+    buildCube();
+    updateButtons();
+    animate();
+  </script>
+</body>
+</html>
