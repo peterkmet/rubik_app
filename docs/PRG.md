@@ -115,7 +115,8 @@ dvojfázový algoritmus) bez zásahu do zvyšku aplikácie.
 | Tlačidlo „Zamiešať“  | Zamieša kocku `X` náhodnými ťahmi (animovane).            |
 | Tlačidlo „Vyriešiť“  | Spustí solver, ktorý kocku zloží (animovane).             |
 | Tlačidlo „Reset“     | Okamžite vráti kocku do vyriešeného stavu.                |
-| Ťahanie myšou        | Otáčanie pohľadu kamery okolo kocky (OrbitControls).      |
+| Ťah myšou na kocke   | Pootočí príslušnú vrstvu v smere ťahu (raycasting).       |
+| Ťah myšou mimo kocky | Otáčanie pohľadu kamery okolo kocky (OrbitControls).      |
 | Koliesko myši        | Priblíženie / oddialenie.                                 |
 
 Počas prebiehajúcej animácie sú tlačidlá zablokované, aby nedošlo k
@@ -130,14 +131,23 @@ rubik_app/
     └── PRG.md         # tento dokument
 ```
 
-## 7. Plánované rozšírenia (ďalšia verzia)
+## 7. Ovládanie kocky myšou (implementované)
 
-- **Ovládanie kocky myšou** – kliknutím (a potiahnutím) na hranu kocky sa
-  príslušná vrstva pootočí. Bude potrebné:
-  - raycasting (`THREE.Raycaster`) na zistenie, na ktorú stenu/hranu
-    používateľ klikol,
-  - z vektora ťahu myši odvodiť os a smer otáčania danej vrstvy,
-  - znovu použiť existujúci animačný mechanizmus otáčania vrstiev.
+Ťahom (drag) na ktorúkoľvek stenu kocky sa príslušná vrstva pootočí o 90°
+v smere ťahu. Funguje takto:
+
+1. Pri stlačení sa cez `THREE.Raycaster` zistí, na ktorú malú kocku a stenu
+   používateľ klikol (vrátane svetovej normály steny).
+2. Z vektora ťahu myši na obrazovke sa určí, ktorej osi roviny steny ťah
+   najviac zodpovedá → z toho sa odvodí **os a smer otáčania** vrstvy.
+3. Použije sa **existujúci animačný mechanizmus** otáčania vrstiev (rovnaký
+   ako pri miešaní/riešení).
+
+Počas ťahu na kocku je dočasne vypnuté otáčanie kamery (OrbitControls), aby
+sa pohyby neprekrývali. Ťah mimo kocky naďalej otáča pohľad.
+
+## 8. Plánované rozšírenia (ďalšia verzia)
+
 - Plnohodnotný algoritmický solver (Kociemba) so zobrazením krokov.
 - História ťahov + krok späť / vpred.
 - Uloženie a načítanie stavu kocky.

@@ -128,7 +128,7 @@
     <div id="status">Kocka je <b>postavená</b>.</div>
   </div>
 
-  <div id="hint">Ťahaj myšou pre otáčanie pohľadu · kolieskom zoom</div>
+  <div id="hint">Ťahaj na kocke = pootoč vrstvu · ťahaj mimo kocky = otoč pohľad · koliesko = zoom</div>
 
   <script type="module">
     import * as THREE from 'three';
@@ -265,8 +265,7 @@
       return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
     }
 
-    function startMove(token) {
-      const m = parseToken(token);
+    function startMove(m) {
       const pivot = new THREE.Group();
       scene.add(pivot);
       cubies.forEach((c) => {
@@ -298,12 +297,18 @@
       activeMove = null;
     }
 
-    function enqueue(tokens, phase, doneCb) {
+    // Zaradí ťahy (move-objekty) do fronty.
+    function enqueueMoves(moves, phase, doneCb) {
       isBusy = true;
       currentPhase = phase;
       onDone = doneCb || null;
-      queue.push(...tokens);
+      queue.push(...moves);
       updateButtons();
+    }
+
+    // Pohodlný vstup cez notáciu ("U", "R'", "F2", …).
+    function enqueue(tokens, phase, doneCb) {
+      enqueueMoves(tokens.map(parseToken), phase, doneCb);
     }
 
     // ---------- Miešanie a solver ----------
@@ -434,6 +439,95 @@
       camera.aspect = window.innerWidth / window.innerHeight;
       camera.updateProjectionMatrix();
       renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    // ---------- Ovládanie myšou (ťah na hranu pootočí vrstvu) ----------
+    const raycaster = new THREE.Raycaster();
+    const pointer = new THREE.Vector2();
+    let drag = null; // { cubie, normal, x, y, done }
+
+    function setPointer(clientX, clientY) {
+      const r = renderer.domElement.getBoundingClientRect();
+      pointer.x = ((clientX - r.left) / r.width) * 2 - 1;
+      pointer.y = -((clientY - r.top) / r.height) * 2 + 1;
+    }
+
+    // Svetový bod -> obrazovkové súradnice v px (y smerom dole).
+    function toScreen(p) {
+      const v = p.clone().project(camera);
+      const w = renderer.domElement.clientWidth;
+      const h = renderer.domElement.clientHeight;
+      return new THREE.Vector2((v.x * 0.5 + 0.5) * w, (-v.y * 0.5 + 0.5) * h);
+    }
+
+    // Z ťahu myši odvodí, ktorú vrstvu a ktorým smerom otočiť.
+    function computeMove(cubie, normal, dx, dy) {
+      const dragScreen = new THREE.Vector2(dx, dy).normalize();
+      const center = cubie.position.clone();
+      // kandidátske osi roviny steny (tie, ktoré nie sú pozdĺž normály)
+      const axisNames = ['x', 'y', 'z'].filter((a) => Math.abs(normal[a]) < 0.5);
+
+      let best = null;
+      let bestDot = 0;
+      for (const a of axisNames) {
+        const v = new THREE.Vector3(a === 'x' ? 1 : 0, a === 'y' ? 1 : 0, a === 'z' ? 1 : 0);
+        const sa = toScreen(center);
+        const sb = toScreen(center.clone().add(v));
+        const sdir = sb.sub(sa);
+        const d = sdir.x * dragScreen.x + sdir.y * dragScreen.y;
+        if (Math.abs(d) > Math.abs(bestDot)) { bestDot = d; best = v; }
+      }
+      if (!best) return null;
+
+      const moveDir = best.multiplyScalar(Math.sign(bestDot)); // svetový smer ťahu
+      const ax = new THREE.Vector3().crossVectors(normal, moveDir).round(); // ± svetová os
+
+      let axisName, axSign;
+      ['x', 'y', 'z'].forEach((a) => {
+        if (Math.abs(ax[a]) > 0.5) { axisName = a; axSign = Math.sign(ax[a]); }
+      });
+      if (!axisName) return null;
+
+      // znamienko tak, aby sa ťahaný bod hýbal v smere moveDir
+      const vel = new THREE.Vector3().crossVectors(ax, center);
+      const sgn = Math.sign(vel.dot(moveDir)) || 1;
+
+      return {
+        axis: axisName,
+        layer: Math.round(cubie.position[axisName]),
+        angle: axSign * sgn * HALF_PI,
+        turns: 1,
+      };
+    }
+
+    // Capture na window beží skôr než interný listener OrbitControls,
+    // takže pri kliknutí na kocku stihneme vypnúť otáčanie kamery.
+    window.addEventListener('pointerdown', (e) => {
+      if (isBusy || e.target !== renderer.domElement) return;
+      setPointer(e.clientX, e.clientY);
+      raycaster.setFromCamera(pointer, camera);
+      const hits = raycaster.intersectObjects(cubies, false);
+      if (hits.length === 0) return; // prázdny priestor -> nechaj kameru
+      const hit = hits[0];
+      const normal = hit.face.normal.clone().transformDirection(hit.object.matrixWorld).round();
+      drag = { cubie: hit.object, normal, x: e.clientX, y: e.clientY, done: false };
+      controls.enabled = false; // počas ťahu na kocku neotáčaj pohľad
+    }, true);
+
+    window.addEventListener('pointermove', (e) => {
+      if (!drag || drag.done) return;
+      const dx = e.clientX - drag.x;
+      const dy = e.clientY - drag.y;
+      if (Math.hypot(dx, dy) < 8) return; // prah, aby klik nebol ťah
+      drag.done = true;
+      const move = computeMove(drag.cubie, drag.normal, dx, dy);
+      controls.enabled = true;
+      if (move) enqueueMoves([move], 'manual');
+    });
+
+    window.addEventListener('pointerup', () => {
+      controls.enabled = true;
+      drag = null;
     });
 
     // Sprístupni pre ladenie z konzoly (kroky plánu 3 a 6).
