@@ -128,7 +128,7 @@
     <div id="status">Kocka je <b>postavená</b>.</div>
   </div>
 
-  <div id="hint">Klikni na stenu = pootoč vrstvu (od kurzora) · ťahaj myšou = otoč pohľad · koliesko = zoom</div>
+  <div id="hint">Klikni bližšie k hrane kocky = pootoč daný slice · ťahaj myšou = otoč pohľad · koliesko = zoom</div>
 
   <script type="module">
     import * as THREE from 'three';
@@ -463,10 +463,13 @@
       renderer.setSize(window.innerWidth, window.innerHeight);
     });
 
-    // ---------- Ovládanie myšou (ťah na hranu pootočí vrstvu) ----------
+    // ---------- Ovládanie myšou (klik na stenu pootočí vrstvu) ----------
     const raycaster = new THREE.Raycaster();
     const pointer = new THREE.Vector2();
-    let drag = null; // { cubie, normal, x, y, done }
+    let drag = null; // { cubie, normal, point, x, y }
+
+    // Smer otáčania: +1 / -1 (ľahké prehodenie, keby bol smer opačný).
+    const TURN_SIGN = 1;
 
     function setPointer(clientX, clientY) {
       const r = renderer.domElement.getBoundingClientRect();
@@ -474,56 +477,48 @@
       pointer.y = -((clientY - r.top) / r.height) * 2 + 1;
     }
 
-    // Svetový bod -> obrazovkové súradnice v px (y smerom dole).
-    function toScreen(p) {
-      const v = p.clone().project(camera);
-      const w = renderer.domElement.clientWidth;
-      const h = renderer.domElement.clientHeight;
-      return new THREE.Vector2((v.x * 0.5 + 0.5) * w, (-v.y * 0.5 + 0.5) * h);
-    }
+    // Z miesta kliknutia v rámci malej kocky odvodí, ktorú vrstvu a ktorým
+    // smerom otočiť. Podľa toho, či je klik bližšie k vodorovnej alebo zvislej
+    // hrane steny, sa otočí horizontálny alebo vertikálny „slice“.
+    function computeMove(cubie, normal, point) {
+      // poloha kliknutia v rovine steny (vzhľadom na stred malej kocky)
+      const offset = point.clone().sub(cubie.position);
+      offset.addScaledVector(normal, -offset.dot(normal));
 
-    // Z ťahu myši odvodí, ktorú vrstvu a ktorým smerom otočiť.
-    function computeMove(cubie, normal, dx, dy) {
-      const dragScreen = new THREE.Vector2(dx, dy).normalize();
-      const center = cubie.position.clone();
-      // kandidátske osi roviny steny (tie, ktoré nie sú pozdĺž normály)
-      const axisNames = ['x', 'y', 'z'].filter((a) => Math.abs(normal[a]) < 0.5);
-
-      let best = null;
-      let bestDot = 0;
-      for (const a of axisNames) {
-        const v = new THREE.Vector3(a === 'x' ? 1 : 0, a === 'y' ? 1 : 0, a === 'z' ? 1 : 0);
-        const sa = toScreen(center);
-        const sb = toScreen(center.clone().add(v));
-        const sdir = sb.sub(sa);
-        const d = sdir.x * dragScreen.x + sdir.y * dragScreen.y;
-        if (Math.abs(d) > Math.abs(bestDot)) { bestDot = d; best = v; }
+      const nAxis = Math.abs(normal.x) > 0.5 ? 'x' : Math.abs(normal.y) > 0.5 ? 'y' : 'z';
+      // dominantná dotyková os (mimo normály) určuje smer pohybu kliknutého bodu
+      let tAxis = null, bestVal = -1;
+      for (const a of ['x', 'y', 'z']) {
+        if (a === nAxis) continue;
+        if (Math.abs(offset[a]) > bestVal) { bestVal = Math.abs(offset[a]); tAxis = a; }
       }
-      if (!best) return null;
+      if (!tAxis) return null;
 
-      const moveDir = best.multiplyScalar(Math.sign(bestDot)); // svetový smer ťahu
-      const ax = new THREE.Vector3().crossVectors(normal, moveDir).round(); // ± svetová os
+      const moveDir = new THREE.Vector3();
+      moveDir[tAxis] = Math.sign(offset[tAxis]) || 1;
 
+      // os otáčania = normála × smer pohybu  (kolmá na obe → tretia os)
+      const rotAxis = new THREE.Vector3().crossVectors(normal, moveDir).round();
       let axisName, axSign;
-      ['x', 'y', 'z'].forEach((a) => {
-        if (Math.abs(ax[a]) > 0.5) { axisName = a; axSign = Math.sign(ax[a]); }
-      });
+      for (const a of ['x', 'y', 'z']) {
+        if (Math.abs(rotAxis[a]) > 0.5) { axisName = a; axSign = Math.sign(rotAxis[a]); }
+      }
       if (!axisName) return null;
 
-      // znamienko tak, aby sa ťahaný bod hýbal v smere moveDir
-      const vel = new THREE.Vector3().crossVectors(ax, center);
+      // znamienko tak, aby sa kliknutý bod pohol v smere moveDir
+      const vel = new THREE.Vector3().crossVectors(rotAxis, cubie.position);
       const sgn = Math.sign(vel.dot(moveDir)) || 1;
 
       return {
         axis: axisName,
         layer: Math.round(cubie.position[axisName]),
-        angle: axSign * sgn * HALF_PI,
+        angle: TURN_SIGN * axSign * sgn * HALF_PI,
         turns: 1,
       };
     }
 
-    // Klik na stenu kocky pootočí danú vrstvu „smerom od kurzora“ – stačí
-    // kliknúť, netreba ťahať. Ťahaním (pohybom myši) sa otáča pohľad kamery.
+    // Klik na stenu kocky pootočí danú vrstvu – stačí kliknúť, netreba ťahať.
+    // Ťahaním (pohybom myši) sa otáča pohľad kamery (OrbitControls).
     window.addEventListener('pointerdown', (e) => {
       if (isBusy || e.target !== renderer.domElement) { drag = null; return; }
       setPointer(e.clientX, e.clientY);
@@ -538,21 +533,16 @@
       if (ax >= ay && ax >= az) normal = new THREE.Vector3(Math.sign(wn.x), 0, 0);
       else if (ay >= az) normal = new THREE.Vector3(0, Math.sign(wn.y), 0);
       else normal = new THREE.Vector3(0, 0, Math.sign(wn.z));
-      drag = { cubie: hit.object, normal, x: e.clientX, y: e.clientY };
+      drag = { cubie: hit.object, normal, point: hit.point.clone(), x: e.clientX, y: e.clientY };
     });
 
     window.addEventListener('pointerup', (e) => {
       if (!drag) return;
       const moved = Math.hypot(e.clientX - drag.x, e.clientY - drag.y);
       if (moved < 8) {
-        // čistý klik -> otoč vrstvu tak, že klinutý bod ide smerom do stredu (od kurzora)
-        const center = toScreen(new THREE.Vector3(0, 0, 0));
-        const dx = center.x - drag.x;
-        const dy = center.y - drag.y;
-        if (Math.hypot(dx, dy) > 1e-3) {
-          const move = computeMove(drag.cubie, drag.normal, dx, dy);
-          if (move) enqueueMoves([move], 'manual');
-        }
+        // čistý klik -> otoč vrstvu podľa miesta kliknutia v rámci malej kocky
+        const move = computeMove(drag.cubie, drag.normal, drag.point);
+        if (move) enqueueMoves([move], 'manual');
       }
       drag = null; // inak to bol ťah -> kameru už otočil OrbitControls
     });

@@ -134,19 +134,23 @@ rubik_app/
 ## 7. Ovládanie kocky myšou (implementované)
 
 **Kliknutím** na ktorúkoľvek stenu kocky sa príslušná vrstva pootočí o 90°
-„smerom od kurzora“ – stačí kliknúť, netreba ťahať. Funguje takto:
+– stačí kliknúť, netreba ťahať. Funguje takto:
 
 1. Pri kliknutí sa cez `THREE.Raycaster` zistí, na ktorú malú kocku a stenu
-   používateľ klikol; svetová normála steny sa prichytí na dominantnú os
-   (kvôli zaobleným hranám).
-2. Ako smer „ťahu“ sa použije vektor z miesta kliknutia smerom do stredu
-   kocky (na obrazovke). Z neho sa určí os roviny steny → a z toho **os a
-   smer otáčania** vrstvy tak, aby sa klinutý bod pohol od kurzora.
-3. Použije sa **existujúci animačný mechanizmus** otáčania vrstiev (rovnaký
+   používateľ klikol (vrátane **presného bodu** dopadu); svetová normála
+   steny sa prichytí na dominantnú os (kvôli zaobleným hranám).
+2. Z polohy kliknutia **v rámci malej kocky** (odchýlka od jej stredu v
+   rovine steny) sa určí dominantná dotyková os – teda či používateľ klikol
+   bližšie k vodorovnej alebo zvislej hrane. Tým sa rozhodne, či sa otočí
+   **horizontálny alebo vertikálny slice**, a v ktorom smere.
+3. Os otáčania = `normála × smer kliknutia`; vrstva je daná súradnicou
+   klinutej malej kocky pozdĺž tejto osi.
+4. Použije sa **existujúci animačný mechanizmus** otáčania vrstiev (rovnaký
    ako pri miešaní/riešení).
 
 Rozlišuje sa klik vs. ťah podľa prejdenej vzdialenosti: krátky klik otočí
 vrstvu, ťah (pohyb myši) necháva otáčať pohľad kamery (OrbitControls).
+Smer otáčania je v konštante `TURN_SIGN` (ľahké prehodenie).
 
 ## 8. Plánované rozšírenia (ďalšia verzia)
 
