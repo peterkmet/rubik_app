@@ -133,28 +133,32 @@
   <script type="module">
     import * as THREE from 'three';
     import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 
     // ---------- Konštanty ----------
     const COLORS = {
-      U: 0xffffff, // hore – biela
-      D: 0xffd500, // dole – žltá
-      F: 0x009b48, // vpredu – zelená
-      B: 0x0046ad, // vzadu – modrá
-      R: 0xb71234, // vpravo – červená
-      L: 0xff5800, // vľavo – oranžová
+      U: 0xf7f7f5, // hore – biela
+      D: 0xffd62e, // dole – žltá
+      F: 0x4cc23f, // vpredu – zelená
+      B: 0x2f6fed, // vzadu – modrá
+      R: 0xe8423a, // vpravo – červená
+      L: 0xff8b1f, // vľavo – oranžová
     };
-    const BLACK = 0x14181f;          // vnútorné steny / pozadie škár
-    const SIZE = 0.94;               // veľkosť cubie (medzera medzi nimi)
+    const BODY = 0x0b0b0d;           // čierne plastové telo kocky
+    const SIZE = 0.97;               // veľkosť cubie (telo)
+    const BODY_RADIUS = 0.09;        // zaoblenie hrán tela
+    const STICKER = 0.82;            // veľkosť nálepky
+    const STICKER_RADIUS = 0.12;     // zaoblenie rohov nálepky
     const HALF_PI = Math.PI / 2;
 
-    // Poradie materiálov BoxGeometry: +X, -X, +Y, -Y, +Z, -Z
-    const LOCAL_NORMALS = [
-      new THREE.Vector3( 1, 0, 0),
-      new THREE.Vector3(-1, 0, 0),
-      new THREE.Vector3( 0, 1, 0),
-      new THREE.Vector3( 0,-1, 0),
-      new THREE.Vector3( 0, 0, 1),
-      new THREE.Vector3( 0, 0,-1),
+    // Steny cubie: lokálna normála + podmienka, kedy je nálepka viditeľná.
+    const FACE_DEFS = [
+      { n: new THREE.Vector3( 1, 0, 0), key: 'R', test: (x) => x ===  1 },
+      { n: new THREE.Vector3(-1, 0, 0), key: 'L', test: (x) => x === -1 },
+      { n: new THREE.Vector3( 0, 1, 0), key: 'U', test: (_x, y) => y ===  1 },
+      { n: new THREE.Vector3( 0,-1, 0), key: 'D', test: (_x, y) => y === -1 },
+      { n: new THREE.Vector3( 0, 0, 1), key: 'F', test: (_x, _y, z) => z ===  1 },
+      { n: new THREE.Vector3( 0, 0,-1), key: 'B', test: (_x, _y, z) => z === -1 },
     ];
 
     // Definícia základných ťahov: os, vrstva (±1) a smer otočenia.
@@ -188,38 +192,64 @@
     controls.maxDistance = 16;
     controls.target.set(0, 0, 0);
 
-    scene.add(new THREE.AmbientLight(0xffffff, 0.9));
-    const dir = new THREE.DirectionalLight(0xffffff, 0.6);
-    dir.position.set(5, 8, 6);
-    scene.add(dir);
+    scene.add(new THREE.AmbientLight(0xffffff, 0.85));
+    const key = new THREE.DirectionalLight(0xffffff, 0.65);
+    key.position.set(6, 9, 7);
+    scene.add(key);
+    const fill = new THREE.DirectionalLight(0xffffff, 0.35);
+    fill.position.set(-7, -3, -6);
+    scene.add(fill);
 
     // ---------- Stavba kocky ----------
     let cubies = [];
+    const bodyGeo = new RoundedBoxGeometry(SIZE, SIZE, SIZE, 4, BODY_RADIUS);
+
+    // Zaoblený obdĺžnik (nálepka) v rovine XY, vystredený v počiatku.
+    function roundedRectShape(w, h, r) {
+      const s = new THREE.Shape();
+      const x = -w / 2, y = -h / 2;
+      s.moveTo(x + r, y);
+      s.lineTo(x + w - r, y);
+      s.quadraticCurveTo(x + w, y, x + w, y + r);
+      s.lineTo(x + w, y + h - r);
+      s.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+      s.lineTo(x + r, y + h);
+      s.quadraticCurveTo(x, y + h, x, y + h - r);
+      s.lineTo(x, y + r);
+      s.quadraticCurveTo(x, y, x + r, y);
+      return s;
+    }
+    const stickerGeo = new THREE.ShapeGeometry(roundedRectShape(STICKER, STICKER, STICKER_RADIUS));
+    const Z_AXIS = new THREE.Vector3(0, 0, 1);
 
     function makeCubie(x, y, z) {
-      const mats = LOCAL_NORMALS.map((n) => {
-        let color = BLACK;
-        if (n.x ===  1 && x ===  1) color = COLORS.R;
-        if (n.x === -1 && x === -1) color = COLORS.L;
-        if (n.y ===  1 && y ===  1) color = COLORS.U;
-        if (n.y === -1 && y === -1) color = COLORS.D;
-        if (n.z ===  1 && z ===  1) color = COLORS.F;
-        if (n.z === -1 && z === -1) color = COLORS.B;
-        return new THREE.MeshStandardMaterial({ color, roughness: 0.55, metalness: 0.0 });
-      });
-      const geo = new THREE.BoxGeometry(SIZE, SIZE, SIZE);
-      const mesh = new THREE.Mesh(geo, mats);
-      mesh.position.set(x, y, z);
-      return mesh;
+      const body = new THREE.Mesh(
+        bodyGeo,
+        new THREE.MeshStandardMaterial({ color: BODY, roughness: 0.35, metalness: 0.0 })
+      );
+      body.position.set(x, y, z);
+      body.userData.stickers = [];
+
+      for (const f of FACE_DEFS) {
+        if (!f.test(x, y, z)) continue;
+        const mat = new THREE.MeshStandardMaterial({ color: COLORS[f.key], roughness: 0.4, metalness: 0.0 });
+        const sticker = new THREE.Mesh(stickerGeo, mat);
+        sticker.quaternion.setFromUnitVectors(Z_AXIS, f.n);
+        sticker.position.copy(f.n).multiplyScalar(SIZE / 2 + 0.002);
+        body.add(sticker);
+        body.userData.stickers.push({ normal: f.n.clone(), color: COLORS[f.key] });
+      }
+      return body;
+    }
+
+    function disposeCubie(c) {
+      scene.remove(c);
+      c.material.dispose();
+      c.children.forEach((s) => s.material.dispose());
     }
 
     function buildCube() {
-      // odstráň existujúce cubies
-      cubies.forEach((c) => {
-        scene.remove(c);
-        c.geometry.dispose();
-        c.material.forEach((m) => m.dispose());
-      });
+      cubies.forEach(disposeCubie);
       cubies = [];
       for (let x = -1; x <= 1; x++)
         for (let y = -1; y <= 1; y++)
@@ -334,32 +364,24 @@
     }
 
     // ---------- Kontrola vyriešenia ----------
-    function faceColorTowards(cubie, dir) {
-      for (let i = 0; i < 6; i++) {
-        const n = LOCAL_NORMALS[i].clone().applyQuaternion(cubie.quaternion);
-        if (n.dot(dir) > 0.9) return cubie.material[i].color.getHex();
-      }
-      return null;
-    }
-
+    // Kocka je vyriešená, keď každá zo 6 svetových strán ukazuje jednu farbu.
     function isSolved() {
       const dirs = [
-        ['x',  1], ['x', -1], ['y', 1], ['y', -1], ['z', 1], ['z', -1],
+        new THREE.Vector3( 1, 0, 0), new THREE.Vector3(-1, 0, 0),
+        new THREE.Vector3( 0, 1, 0), new THREE.Vector3( 0,-1, 0),
+        new THREE.Vector3( 0, 0, 1), new THREE.Vector3( 0, 0,-1),
       ];
-      for (const [axis, sign] of dirs) {
-        const dir = new THREE.Vector3(
-          axis === 'x' ? sign : 0,
-          axis === 'y' ? sign : 0,
-          axis === 'z' ? sign : 0
-        );
-        const colors = [];
-        cubies.forEach((c) => {
-          if (Math.round(c.position[axis]) === sign) {
-            const col = faceColorTowards(c, dir);
-            if (col !== null && col !== BLACK) colors.push(col);
+      for (const dir of dirs) {
+        let color = null;
+        for (const c of cubies) {
+          for (const s of c.userData.stickers) {
+            const wn = s.normal.clone().applyQuaternion(c.quaternion);
+            if (wn.dot(dir) > 0.9) {
+              if (color === null) color = s.color;
+              else if (color !== s.color) return false;
+            }
           }
-        });
-        if (new Set(colors).size > 1) return false;
+        }
       }
       return true;
     }
@@ -509,7 +531,13 @@
       const hits = raycaster.intersectObjects(cubies, false);
       if (hits.length === 0) return; // prázdny priestor -> nechaj kameru
       const hit = hits[0];
-      const normal = hit.face.normal.clone().transformDirection(hit.object.matrixWorld).round();
+      // svetová normála steny, „prichytená“ na dominantnú os (kvôli zaobleným hranám)
+      const wn = hit.face.normal.clone().transformDirection(hit.object.matrixWorld);
+      const ax = Math.abs(wn.x), ay = Math.abs(wn.y), az = Math.abs(wn.z);
+      let normal;
+      if (ax >= ay && ax >= az) normal = new THREE.Vector3(Math.sign(wn.x), 0, 0);
+      else if (ay >= az) normal = new THREE.Vector3(0, Math.sign(wn.y), 0);
+      else normal = new THREE.Vector3(0, 0, Math.sign(wn.z));
       drag = { cubie: hit.object, normal, x: e.clientX, y: e.clientY, done: false };
       controls.enabled = false; // počas ťahu na kocku neotáčaj pohľad
     }, true);
